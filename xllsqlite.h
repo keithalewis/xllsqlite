@@ -38,7 +38,7 @@ namespace sqlite {
         class stmt {
             sqlite::db& db;
             sqlite3_stmt* pstmt;
-            const char* tail_;
+            const wchar_t* tail_;
         public:
             stmt(sqlite::db& db)
                 : db(db), pstmt(nullptr)
@@ -50,9 +50,9 @@ namespace sqlite {
                 if (pstmt != nullptr)
                     sqlite3_finalize(pstmt);
             }
-            sqlite3_stmt** operator&()
+            operator sqlite3_stmt*()
             {
-                return &pstmt;
+                return pstmt;
             }
             int reset()
             {
@@ -62,7 +62,7 @@ namespace sqlite {
             {
                 return sqlite3_step(pstmt);
             }
-            const char* tail() const
+            const wchar_t* tail() const
             {
                 return tail_;
             }
@@ -78,25 +78,94 @@ namespace sqlite {
             {
                 return sqlite3_bind_double(pstmt, col, d);
             }
-            int bind(int col, const char* t, int n = -1, void(*dealloc)(void*) = SQLITE_STATIC)
+            int bind(int col, const wchar_t* t, int n = -1, void(*dealloc)(void*) = SQLITE_STATIC)
             {
-                return sqlite3_bind_text(pstmt, col, t, n, dealloc);
+                return sqlite3_bind_text16(pstmt, col, t, n, dealloc);
             }
-            int prepare(const char* sql, int nsql = -1)
+            int prepare(const wchar_t* sql, int nsql = -1)
             {
-                return sqlite3_prepare_v2(db, sql, nsql, &pstmt, &tail_);
+                return sqlite3_prepare16_v2(db, sql, nsql, &pstmt, (const void**)&tail_);
             }
         };
     };
 }
 
-// convert to range
-// stmt should be prepared prior to calling
-inline OPER to_range(const sqlite::db::stmt& stmt)
+// SQL CREATE TABLE command from a range.
+inline std::wstring sqlite_create_table(const xll::OPER& name, const xll::OPER& o)
 {
-    OPER o;
+    ensure (o.rows() >= 2);
+    std::wstring s = L"CREATE TABLE ";
+    s.append(name.val.str + 1, name.val.str[0]);
+    s.append(L"(\n");
+    std::wstring comma = L"";
+    for (int i = 0; i < o.columns(); ++i) {
+        const xll::OPER& oi = o(0,i);
+        ensure (oi.isStr());
+        s.append(comma);
+        s.append(oi.val.str + 1, oi.val.str[0]);
 
-    // while SQLITE_ROW == stmt.next() ...
+        switch (o(1,i).xltype) {
+        case xltypeNum:
+            s.append(L" REAL");
+            break;
+        case xltypeStr:
+            s.append(L" TEXT");
+            break;
+        case xltypeInt:
+            s.append(L" INTEGER");
+            break;
+        default:
+            ensure(!"invalid sqlite type");
+        }
+
+        comma = L", ";
+    }
+    s.append(L"\n);");
+
+    return s;
+}
+
+// Works like sqlite3_exec but returns an OPER.
+inline xll::OPER sqlite_range(sqlite::db& db, const XCHAR* sql, bool header = false)
+{
+    xll::OPER o;
+
+    sqlite::db::stmt stmt(db);
+    ensure (SQLITE_OK == stmt.prepare(sql));
+    
+    if (SQLITE_ROW != stmt.step())
+        return o;
+   
+    int n = sqlite3_column_count(stmt);
+    if (header) {
+        xll::OPER head(1, n);
+        for (int i = 0; i < n; ++i) {
+            head[i] = xll::OPER((const XCHAR*)sqlite3_column_name16(stmt, i));
+        }
+        o.push_back(head);
+    }
+    do {
+        xll::OPER row(1, n);
+        for (int i = 0; i < n; ++i) {
+            switch (sqlite3_column_type(stmt, i)) {
+            case SQLITE_FLOAT:
+                row[i] = sqlite3_column_double(stmt, i);
+                break;
+            case SQLITE_TEXT:
+                row[i] = xll::OPER((const XCHAR*)sqlite3_column_text16(stmt, i));
+                break;
+            case SQLITE_INTEGER:
+                row[i] = sqlite3_column_int(stmt, i);
+                break;
+            case SQLITE_NULL:
+                row[i] = xll::OPER(xlerr::NA); // #NULL ???
+                break;
+            default:
+                row[i] = xll::OPER(xlerr::NA);
+            }
+        }
+        o.push_back(row);
+    } while (SQLITE_ROW == stmt.step());
 
     return o;
 }
