@@ -7,12 +7,11 @@ namespace sqlite {
 
     class db {
         sqlite3* pdb;
-        char* errmsg_;
     public:
         db(const wchar_t* file)
-            : errmsg_(0)
         {
-            ensure(SQLITE_OK == sqlite3_open16(file, &pdb));
+            if (SQLITE_OK != sqlite3_open16(file, &pdb))
+                throw std::runtime_error(sqlite3_errmsg(pdb));
         }
         db(const db&) = delete;
         db& operator=(const db&) = delete;
@@ -20,20 +19,9 @@ namespace sqlite {
         {
             sqlite3_close(pdb);
         }
+        // for use in sqlite3_* functions
         operator sqlite3*() {
             return pdb;
-        }
-        const char* errmsg() const
-        {
-            return errmsg_;
-        }
-
-        int exec(const char* sql, int(*cb)(void*, int, char**, char**) = 0, void* arg = 0)
-        {
-            if (errmsg_)
-                sqlite3_free(errmsg_);
-
-            return sqlite3_exec(pdb, sql, cb, arg, &errmsg_);
         }
         class stmt {
             sqlite::db& db;
@@ -50,9 +38,18 @@ namespace sqlite {
                 if (pstmt != nullptr)
                     sqlite3_finalize(pstmt);
             }
+            // for use in sqlite3_* functions
             operator sqlite3_stmt*()
             {
                 return pstmt;
+            }
+            const char* errmsg() const
+            {
+                return sqlite3_errmsg(db);
+            }
+            int prepare(const wchar_t* sql, int nsql = -1)
+            {
+                return sqlite3_prepare16_v2(db, sql, nsql, &pstmt, (const void**)&tail_);
             }
             int reset()
             {
@@ -81,10 +78,6 @@ namespace sqlite {
             int bind(int col, const wchar_t* t, int n = -1, void(*dealloc)(void*) = SQLITE_STATIC)
             {
                 return sqlite3_bind_text16(pstmt, col, t, n, dealloc);
-            }
-            int prepare(const wchar_t* sql, int nsql = -1)
-            {
-                return sqlite3_prepare16_v2(db, sql, nsql, &pstmt, (const void**)&tail_);
             }
         };
     };
@@ -131,10 +124,13 @@ inline xll::OPER sqlite_range(sqlite::db& db, const XCHAR* sql, bool header = fa
     xll::OPER o;
 
     sqlite::db::stmt stmt(db);
-    ensure (SQLITE_OK == stmt.prepare(sql));
+    int rc = stmt.prepare(sql);
+    if (SQLITE_OK != rc)
+        throw std::runtime_error(stmt.errmsg());
     
-    if (SQLITE_ROW != stmt.step())
-        return o;
+    rc = stmt.step();
+    if (rc != SQLITE_ROW && rc != SQLITE_DONE)
+        throw std::runtime_error(stmt.errmsg());
    
     int n = sqlite3_column_count(stmt);
     if (header) {
@@ -144,7 +140,7 @@ inline xll::OPER sqlite_range(sqlite::db& db, const XCHAR* sql, bool header = fa
         }
         o.push_back(head);
     }
-    do {
+    while (SQLITE_ROW == rc) {
         xll::OPER row(1, n);
         for (int i = 0; i < n; ++i) {
             switch (sqlite3_column_type(stmt, i)) {
@@ -165,7 +161,8 @@ inline xll::OPER sqlite_range(sqlite::db& db, const XCHAR* sql, bool header = fa
             }
         }
         o.push_back(row);
-    } while (SQLITE_ROW == stmt.step());
+        rc = stmt.step();
+    };
 
     return o;
 }

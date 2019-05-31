@@ -22,12 +22,7 @@ HANDLEX WINAPI xll_sqlite_db(const XCHAR* file)
     handlex h;
 
     try {
-        char buf[1024];
-        size_t n;
-        wcstombs_s(&n, buf, file, 1024);
-//        handle<sqlite::db> h_(new sqlite::db(buf));
         handle<sqlite::db> h_(new sqlite::db(file));
-        ensure (h_);
         h = h_.get();
     }
     catch (const std::exception& ex) {
@@ -36,3 +31,48 @@ HANDLEX WINAPI xll_sqlite_db(const XCHAR* file)
 
     return h;
 }
+
+AddIn xai_sqlite_exec(
+    Function(XLL_LPOPER, L"?xll_sqlite_exec", L"SQLITE.EXEC")
+    .Arg(XLL_HANDLE, L"handle", L"is the sqlite3 database handle returned by SQLITE.DB.")
+    .Arg(XLL_CSTRING, L"sql", L"is the SQL query to execute on the database.")
+    .Arg(XLL_BOOL, L"?headers", L"is an optional argument to specify if headers should be included.")
+    .FunctionHelp(L"Return the result of executing a SQL command on a database.")
+    .Category(L"SQLITE")
+    .Documentation(L"")
+);
+LPOPER WINAPI xll_sqlite_exec(HANDLEX h, const XCHAR* sql, BOOL headers)
+{
+#pragma XLLEXPORT
+    static OPER o;
+
+    try {
+        handle<sqlite::db> h_(h);
+        ensure (h_);
+        o = sqlite_range(*h_, sql, headers);
+    }
+    catch (const std::exception& ex) {
+        XLL_ERROR(ex.what());
+    }
+
+    return &o;
+}
+
+#ifdef _DEBUG
+
+xll::test test_sqlite_range([]{
+    const XCHAR* file = L"../chinook.db";
+    /*
+    DWORD dwAttrib = GetFileAttributes(file);
+    bool b;
+    b = dwAttrib & FILE_ATTRIBUTE_DIRECTORY;
+    */
+    sqlite::db db(file);
+    sqlite::db::stmt stmt(db);
+    OPER o;
+    o = sqlite_range(db, L"select * from artists", true);
+    o = o;
+
+});
+
+#endif // _DEBUG
