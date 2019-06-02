@@ -5,12 +5,52 @@
 
 namespace sqlite {
 
+    class value {
+        sqlite3_value* val;
+    public:
+        value()
+            : val(sqlite3_value_dup(0))
+        { }
+        value(const value& v)
+            : val(sqlite3_value_dup(v.val))
+        { }
+        value& operator=(const value& v)
+        {
+            return *this = value(v);
+        }
+        value(value&& v)
+            : val(v.val)
+        {
+            v.val = sqlite3_value_dup(0);
+        }
+        value& operator=(value&& v) noexcept
+        {
+            std::swap(val, v.val);
+
+            return *this;
+        }
+        ~value()
+        {
+            sqlite3_value_free(val);
+        }
+
+        int bytes() const
+        {
+            return sqlite3_value_bytes(val);
+        }
+        int type() const
+        {
+            return sqlite3_value_type(val);
+        }
+    };
+
+    // Sqlite converts wide strings to UTF-8 so we avoid *16* functions.
     class db {
         sqlite3* pdb;
     public:
-        db(const wchar_t* file)
+        db(const char* file, int flags = SQLITE_OPEN_READONLY)
         {
-            if (SQLITE_OK != sqlite3_open16(file, &pdb))
+            if (SQLITE_OK != sqlite3_open_v2(file, &pdb, flags, 0))
                 throw std::runtime_error(sqlite3_errmsg(pdb));
         }
         db(const db&) = delete;
@@ -26,7 +66,7 @@ namespace sqlite {
         class stmt {
             sqlite::db& db;
             sqlite3_stmt* pstmt;
-            const wchar_t* tail_;
+            const char* tail_;
         public:
             stmt(sqlite::db& db)
                 : db(db), pstmt(nullptr)
@@ -47,19 +87,11 @@ namespace sqlite {
             {
                 return sqlite3_errmsg(db);
             }
-            int prepare(const wchar_t* sql, int nsql = -1)
+            int prepare(const char* sql, int nsql = -1)
             {
-                return sqlite3_prepare16_v2(db, sql, nsql, &pstmt, (const void**)&tail_);
+                return sqlite3_prepare_v2(db, sql, nsql, &pstmt, &tail_);
             }
-            int reset()
-            {
-                return sqlite3_reset(pstmt);
-            }
-            int step()
-            {
-                return sqlite3_step(pstmt);
-            }
-            const wchar_t* tail() const
+            const char* tail() const
             {
                 return tail_;
             }
@@ -75,15 +107,37 @@ namespace sqlite {
             {
                 return sqlite3_bind_double(pstmt, col, d);
             }
-            int bind(int col, const wchar_t* t, int n = -1, void(*dealloc)(void*) = SQLITE_STATIC)
+            // Do not make a copy of text by default.
+            int bind(int col, const char* t, int n = -1, void(*dealloc)(void*) = SQLITE_STATIC)
             {
-                return sqlite3_bind_text16(pstmt, col, t, n, dealloc);
+                return sqlite3_bind_text(pstmt, col, t, n, dealloc);
             }
         };
     };
 }
 
+// convert wide string to UTF-8
+inline std::string narrow(const wchar_t* ws, int ns = -1)
+{
+    std::string s;
+
+    int n;
+    if (ns == -1) {
+        n = WideCharToMultiByte(CP_UTF8, 0, ws, ns, 0, 0, 0, 0);
+    }
+    else {
+        n = ns;
+    }
+    s.reserve(n);
+    
+    int rc = WideCharToMultiByte(CP_UTF8, 0, ws, ns, &s[0], n, 0, 0);
+    ensure (rc != 0);
+
+    return s;
+}
+
 // SQL CREATE TABLE command from a range.
+/*
 inline std::wstring sqlite_create_table(const xll::OPER& name, const xll::OPER& o)
 {
     ensure (o.rows() >= 2);
@@ -117,9 +171,10 @@ inline std::wstring sqlite_create_table(const xll::OPER& name, const xll::OPER& 
 
     return s;
 }
+*/
 
 // Works like sqlite3_exec but returns an OPER.
-inline xll::OPER sqlite_range(sqlite::db& db, const XCHAR* sql, bool header = false)
+inline xll::OPER sqlite_range(sqlite::db& db, const char* sql, bool header = false)
 {
     xll::OPER o;
 
@@ -128,7 +183,7 @@ inline xll::OPER sqlite_range(sqlite::db& db, const XCHAR* sql, bool header = fa
     if (SQLITE_OK != rc)
         throw std::runtime_error(stmt.errmsg());
     
-    rc = stmt.step();
+    rc = sqlite3_step(stmt);
     if (rc != SQLITE_ROW && rc != SQLITE_DONE)
         throw std::runtime_error(stmt.errmsg());
    
@@ -161,7 +216,7 @@ inline xll::OPER sqlite_range(sqlite::db& db, const XCHAR* sql, bool header = fa
             }
         }
         o.push_back(row);
-        rc = stmt.step();
+        rc = sqlite3_step(stmt);
     };
 
     return o;
