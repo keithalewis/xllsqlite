@@ -169,6 +169,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="sqlite-amalgamation-3280000\sqlite3.c" />
+    <ClCompile Include="utility.cpp" />
     <ClCompile Include="xllsqlite.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
