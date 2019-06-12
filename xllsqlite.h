@@ -189,7 +189,7 @@ inline xll::OPER sqlite_range(sqlite::db& db, const char* sql, bool header = fal
                 row[i] = sqlite3_column_int(stmt, i);
                 break;
             case SQLITE_NULL:
-                row[i] = xll::OPER(xlerr::NA); // #NULL ???
+                row[i] = xll::OPER(xlerr::Null); // #NULL ???
                 break;
             default:
                 row[i] = xll::OPER(xlerr::NA);
