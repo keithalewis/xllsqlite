@@ -1,86 +1,12 @@
 // xllsqlite.cpp - sqlite wrapper
 #include <locale>
 #include "xllsqlite.h"
-#include <commdlg.h>
 
 using namespace xll;
-
-using wstring = std::basic_string<wchar_t>;
 
 AddIn xai_sqlite(
     Documentation(L"Sqlite3 wrapper")
 );
-
-AddIn xai_open_file(
-    Function(XLL_CSTRING, L"?xll_open_file", L"OPEN.FILE")
-    .FunctionHelp(L"Display a dialog for selecting a file name.")
-    .Category(L"XLL")
-    .Documentation(L"Return the name of the selected file.")
-);
-const wchar_t* WINAPI xll_open_file()
-{
-#pragma XLLEXPORT
-    static wchar_t buf[1024];
-    OPENFILENAME ofn;
-
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.nMaxFile = 1023;
-    ofn.lpstrFile = buf;
-    buf[0] = 0;
-    ofn.Flags = OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST;
-    BOOL b;
-    b = GetOpenFileName(&ofn);
-
-    return buf;
-}
-
-AddIn xai_join(
-    Function(XLL_CSTRING, L"?xll_join", L"JOIN")
-    .Arg(XLL_LPOPER, L"range", L"is a two-dimensional range.")
-    .Arg(XLL_CSTRING, L"fs", L"is the field seperator for rows.")
-    .Arg(XLL_CSTRING, L"rs", L"is the record seperator for columns.")
-    .Arg(XLL_CSTRING, L"bracket", L"is an optional two character string for the first and last characters.")
-    .FunctionHelp(L"Join cells in range using separators and return a string.")
-    .Category(L"XLL")
-    .Documentation(L"")
-);
-const wchar_t* WINAPI xll_join(LPOPER range, xcstr fs, xcstr rs, xcstr bracket)
-{
-#pragma XLLEXPORT
-    static wstring join;
-
-    try {
-        join = L"";
-        if (bracket && bracket[0]) {
-            join.append(1, bracket[0]);
-        }
-        wstring FS = L"";
-        wstring RS = L"";
-        const auto& r = *range;
-        for (int i = 0; i < r.rows(); ++i) {
-            join.append(RS);
-            for (int j = 0; j < r.columns(); ++j) {
-                join.append(FS);
-                OPER rij = Excel(xlfText, r(i,j), OPER(L"General"));
-                ensure (rij.isStr());
-                join.append(rij.val.str + 1, rij.val.str[0]);
-                FS = fs;
-            }
-            RS = rs;
-        }
-        if (bracket && bracket[0] && bracket[1]) {
-            join.append(1, bracket[1]);
-        }
-    }
-    catch (const std::exception& ex) {
-        XLL_ERROR(ex.what());
-
-        return 0;
-    }
-
-    return join.c_str();
-}
 
 #if 0
 AddIn xai_sql_select(
@@ -143,22 +69,65 @@ const wchar_t* xll_sql_select(LPOPER columns, LPOPER from, LPOPER where, LPOPER 
 }
 #endif
 
+XLL_ENUM_DOC(SQLITE_OPEN_READONLY, SQLITE_OPEN_READONLY, L"SQLITE", L"Read only access.", L"Read only access.");
+XLL_ENUM_DOC(SQLITE_OPEN_READWRITE, SQLITE_OPEN_READWRITE, L"SQLITE", L"Read and write access.", L"Read and write access.");
+XLL_ENUM_DOC(SQLITE_OPEN_CREATE, SQLITE_OPEN_CREATE, L"SQLITE", L"Create database if it does not already exist.", L"Create database if it does not already exist.");
+XLL_ENUM_DOC(SQLITE_OPEN_URI, SQLITE_OPEN_URI, L"SQLITE", L"Open using Universal Resource Identifier.", L"Open using Universal Resource Identifier.");
+XLL_ENUM_DOC(SQLITE_OPEN_MEMORY, SQLITE_OPEN_MEMORY, L"SQLITE", L"Open data base in memory.", L"Open data base in memory.");
+XLL_ENUM_DOC(SQLITE_OPEN_NOMUTEX, SQLITE_OPEN_NOMUTEX, L"SQLITE", L"Do not use mutal exclusing when accessing database.", L"Do not use mutal exclusing when accessing database.");
+XLL_ENUM_DOC(SQLITE_OPEN_FULLMUTEX, SQLITE_OPEN_FULLMUTEX, L"SQLITE", L"Use mutal exclusing when accessing database.", L"Use mutal exclusing when accessing database.");
+
 AddIn xai_sqlite_db(
     Function(XLL_HANDLE, L"?xll_sqlite_db", L"SQLITE.DB")
     .Arg(XLL_CSTRING4, L"file", L"is the name of the sqlite3 database to open.")
+    .Arg(XLL_SHORT, L"flags", L"is an optional set of flags from the SQLITE_OPEN_* enumeration to use when opening the database. Default is SQLITE_OPEN_READONLY.")
     .Uncalced()
     .FunctionHelp(L"Return a handle to a sqlite3 database.")
     .Category(L"SQLITE")
-    .Documentation(L"")
+    .Documentation(L"Call sqlite3_open_v2 with flags SQLITE_OPEN_READONLY.")
 );
-HANDLEX WINAPI xll_sqlite_db(const char* file)
+HANDLEX WINAPI xll_sqlite_db(const char* file, SHORT flags)
 {
 #pragma XLLEXPORT
     handlex h;
 
     try {
-        handle<sqlite::db> h_(new sqlite::db(file));
+        if (flags == 0)
+            flags = SQLITE_OPEN_READONLY;
+
+        handle<sqlite::db> h_(new sqlite::db(file, flags));
         h = h_.get();
+    }
+    catch (const std::exception& ex) {
+        XLL_ERROR(ex.what());
+    }
+
+    return h;
+}
+
+// insert range into table
+#define XLL_LPOPER4 L"P"
+AddIn xai_sqlite_insert(
+    Function(XLL_HANDLE, L"?xll_sqlite_insert", L"SQLITE.INSERT")
+    .Arg(XLL_HANDLE, L"db", L"is a handle to a database returned by SQLITE.OPEN.")
+    .Arg(XLL_CSTRING4, L"table", L"is the name of the table.")
+    .Arg(XLL_LPOPER, L"range", L"is the range to insert.")
+    .FunctionHelp(L"Return the database handle.")
+    .Category(L"SQLITE")
+    .Documentation(L".")
+);
+HANDLEX WINAPI xll_sqlite_insert(HANDLEX db, const char* table, const XLOPER* pr)
+{
+#pragma XLLEXPORT
+    handlex h;
+
+    try {
+        std::string sql = "insert into ";
+        sql.append(table);
+        // walk through rows of pr...
+        OPER o;
+        o = Excel(xlfEvaluate, *pr);
+        db = db;
     }
     catch (const std::exception& ex) {
         XLL_ERROR(ex.what());

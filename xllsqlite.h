@@ -142,15 +142,11 @@ inline const char* sqlite_type(const xll::OPER& o)
     switch (o.type()) {
     case xltypeNum:
         return "REAL";
-    case xltypeStr:
-        return "TEXT";
-    case xltypeInt:
-        return "INTEGER";
     case xltypeBigData:
         return "BLOB";
     }
 
-    return "NULL";
+    return "TEXT";
 }
 
 // Works like sqlite3_exec but returns an OPER.
